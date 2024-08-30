@@ -13,7 +13,7 @@ enum State {
 };
 
 State currentState = IDLE;
-// limitSwitchPin, outerLEDPin, centerLEDPin, lockSwitchPin
+
 // Pin assignments
 const int hallSensorPin = 2;
 const int touchSensorPin = 3;
@@ -61,18 +61,10 @@ void setup() {
 
     // Set up pins
     pinMode(hallSensorPin, INPUT_PULLUP);
-    pinMode(touchSensorPin, INPUT);
-    pinMode(fingerprintSensorPowerOnPin, OUTPUT);
     pinMode(buzzerPin, OUTPUT);
-    pinMode(servoPowerOnPin, OUTPUT);
-    pinMode(servoCtrlPin, OUTPUT);
-    pinMode(toggleSwitchPin, INPUT_PULLUP);
 
     // Setup fingerprint sensor
     finger.begin(57600);
-
-    // Setup servo
-    digitalWrite(servoPowerOnPin, LOW);  // Turn off initially
 
     // Interrupts for waking from sleep on LOW
     attachInterrupt(digitalPinToInterrupt(touchSensorPin), fingerPressed, RISING);
@@ -108,11 +100,19 @@ void loop() {
     }
 }
 
+void activatePins() {
+    pinMode(toggleSwitchPin, INPUT_PULLUP);
+}
+
+void deactivatePins() {
+    pinMode(toggleSwitchPin, INPUT);
+}
+
 void fingerPressed() {
     lastWakeTime = millis();
     lastFingerWakeTime = millis();
     // Turn on the fingerprint sensor
-    turnOnFingerprintSensor();
+    powerFingerprintSensor(true);
 }
 
 void doorMoved() {
@@ -135,7 +135,7 @@ void handleIDLE() {
         if (DEBUG_MODE) Serial.print("Scanner on! ");
         // If the fingerprint sensor has been on for over 10 seconds, turn it off
         if (millis() - lastFingerWakeTime > 10000) {
-            turnOffFingerprintSensor();
+            powerFingerprintSensor(false);
         } else {
             if (!fingerPrintSensorInitialized) {
                 fingerPrintSensorInitialized = finger.verifyPassword();
@@ -143,7 +143,7 @@ void handleIDLE() {
                     Serial.print("FP Sensor init'd: ");
                     Serial.println(fingerPrintSensorInitialized);
                 }
-                if (fingerPrintSensorInitialized) tone(buzzerPin, 1000, 50);  // 1000 Hz for 50 ms
+                if (fingerPrintSensorInitialized) tone(buzzerPin, 1000, 50);
             } else {
                 // Check if a registered fingerprint has been detected
                 if (DEBUG_MODE) Serial.print("Scanning: ");
@@ -172,28 +172,24 @@ void handleIDLE() {
     // Go to sleep if 30 seconds have passed since the last wake up
     if (millis() - lastWakeTime > 10000) {
         // Turn off the fingerprint sensor
-        digitalWrite(fingerprintSensorPowerOnPin, LOW);
+        powerFingerprintSensor(false);
+        deactivatePins();
         set_sleep_mode(SLEEP_MODE_PWR_DOWN);
         sleep_bod_disable();
         sleep_mode();
         // Program continues here after waking up
+        activatePins();
     }
 }
 
 void handleLOCKING() {
-    servo.attach(servoCtrlPin);
-    if (!autolock) {
+    powerServo(true);
+    if (!autolock || isDoorOpen()) {
         currentState = IDLE;
         return;
     }
-    // Make sure the door is closed
-    if (isDoorOpen()) {
-        // Door is open, so we can't lock it
-        currentState = IDLE;
-        return;
-    }
+
     // Lock the door
-    digitalWrite(servoPowerOnPin, HIGH);
     servo.write(lockedPosition);
     bool locked = waitForLock();
 
@@ -214,10 +210,9 @@ void handleLOCKING() {
         lockedTone(locked);
     }
     delay(500);  // allow return to straight position
-    digitalWrite(servoPowerOnPin, LOW);
 
+    powerServo(false);
     currentState = IDLE;
-    servo.detach();
 }
 
 bool waitForLock() {
@@ -256,11 +251,10 @@ void lockedTone(bool success) {
 }
 
 void handleUNLOCKING() {
-    servo.attach(servoCtrlPin);
     // Turn off the fingerprint sensor
-    turnOffFingerprintSensor();
+    powerFingerprintSensor(false);
     // Start unlocking the door
-    digitalWrite(servoPowerOnPin, HIGH);
+    powerServo(true);
     servo.write(unlockedPosition);
     // Play chime
     tone(buzzerPin, 523, 100);  // C5
@@ -272,11 +266,10 @@ void handleUNLOCKING() {
     // Return the servo to normal position
     servo.write(straightPosition);
     delay(500);
+    powerServo(false);
 
-    digitalWrite(servoPowerOnPin, LOW);
     currentState = IDLE;
     lastUnlockTime = millis();
-    servo.detach();
 }
 
 bool isDoorOpen() {
@@ -287,15 +280,27 @@ bool isDoorOpen() {
     return false;
 }
 
-void turnOnFingerprintSensor() {
-    digitalWrite(fingerprintSensorPowerOnPin, HIGH);
-    fingerprintIsOn = true;
+void powerFingerprintSensor(bool power) {
+    if (power) {
+        pinMode(fingerprintSensorPowerOnPin, OUTPUT);
+        digitalWrite(fingerprintSensorPowerOnPin, HIGH);
+    }
+    else {
+        pinMode(fingerprintSensorPowerOnPin, INPUT);
+    }
+    fingerprintIsOn = power;
     fingerPrintSensorInitialized = false;
 }
 
-void turnOffFingerprintSensor() {
-    digitalWrite(fingerprintSensorPowerOnPin, LOW);
-    fingerprintIsOn = false;
+void powerServo(bool power) {
+    if (power) {
+        pinMode(servoPowerOnPin, OUTPUT);
+        digitalWrite(servoPowerOnPin, LOW);
+        servo.attach(servoCtrlPin);
+    } else {
+        pinMode(servoPowerOnPin, INPUT_PULLUP);
+        servo.detach();
+    }
 }
 
 int getFingerprintIDez() {
