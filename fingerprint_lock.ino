@@ -25,7 +25,7 @@ const int buzzerPin = A2;
 
 const int servoPowerOnPin = 6;
 const int servoCtrlPin = 4;
-const int servoPotPin = A0;
+const int servoLimitSwitchPin = A0;
 
 const int toggleSwitchPin = 9;
 
@@ -39,7 +39,6 @@ volatile bool fingerPrintSensorInitialized = false;
 bool doorOpen = false;
 bool autolock = true;
 bool fingerprintIsOn = false;
-int recordedLockReading = -1;
 
 // Set up servo
 Servo servo;
@@ -62,6 +61,10 @@ void setup() {
     // Set up pins
     pinMode(hallSensorPin, INPUT_PULLUP);
     pinMode(buzzerPin, OUTPUT);
+    pinMode(servoLimitSwitchPin, INPUT_PULLUP);
+
+    powerFingerprintSensor(false);
+    powerServo(false);
 
     // Setup fingerprint sensor
     finger.begin(57600);
@@ -102,10 +105,12 @@ void loop() {
 
 void activatePins() {
     pinMode(toggleSwitchPin, INPUT_PULLUP);
+    pinMode(servoLimitSwitchPin, INPUT_PULLUP);
 }
 
 void deactivatePins() {
     pinMode(toggleSwitchPin, INPUT);
+    pinMode(servoLimitSwitchPin, INPUT);
 }
 
 void fingerPressed() {
@@ -159,15 +164,15 @@ void handleIDLE() {
     }
 
     // Check voltage
-    if (millis() - lastVoltagePrintTime >= voltagePrintInterval) {
-        float voltage = readVoltage();
-        if (DEBUG_MODE) {
-            Serial.print("Voltage: ");
-            Serial.print(voltage);
-            Serial.println(" V");
-        }
-        lastVoltagePrintTime = millis();
-    }
+    // if (millis() - lastVoltagePrintTime >= voltagePrintInterval) {
+    //     float voltage = readVoltage();
+    //     if (DEBUG_MODE) {
+    //         Serial.print("Voltage: ");
+    //         Serial.print(voltage);
+    //         Serial.println(" V");
+    //     }
+    //     lastVoltagePrintTime = millis();
+    // }
 
     // Go to sleep if 30 seconds have passed since the last wake up
     if (millis() - lastWakeTime > 10000) {
@@ -218,18 +223,9 @@ void handleLOCKING() {
 bool waitForLock() {
     unsigned long startTime = millis();
     while (millis() - startTime < servoWaitTime) {
-        if (recordedLockReading != -1) {
-            int currReading = analogRead(servoPotPin);
-            int positionDiff = abs(recordedLockReading - currReading);
-            if (positionDiff < 10) return true;
-        }
+        if (digitalRead(servoLimitSwitchPin) == LOW) return true;
+        delay(10);
     }
-
-    if (recordedLockReading == -1) {
-        // recordedLockReading = analogRead(servoPotPin);
-        return true;
-    }
-
     return false;
 }
 
@@ -283,9 +279,8 @@ bool isDoorOpen() {
 void powerFingerprintSensor(bool power) {
     if (power) {
         pinMode(fingerprintSensorPowerOnPin, OUTPUT);
-        digitalWrite(fingerprintSensorPowerOnPin, HIGH);
-    }
-    else {
+        digitalWrite(fingerprintSensorPowerOnPin, LOW);
+    } else {
         pinMode(fingerprintSensorPowerOnPin, INPUT);
     }
     fingerprintIsOn = power;
@@ -297,8 +292,8 @@ void powerServo(bool power) {
         pinMode(servoPowerOnPin, OUTPUT);
         digitalWrite(servoPowerOnPin, LOW);
         servo.attach(servoCtrlPin);
-    } else {
-        pinMode(servoPowerOnPin, INPUT_PULLUP);
+    }else {
+        pinMode(servoPowerOnPin, INPUT);
         servo.detach();
     }
 }
